@@ -1,4 +1,3 @@
-library(tidyverse)
 library(vroom)
 library(ggplot2)
 library(tidyverse)
@@ -10,6 +9,7 @@ library(forecast)
 library(parsnip)
 library(modeltime)
 library(timetk)
+library(prophet)
 
 
 item_demand_test <- vroom('test.csv') # Rows: 45000 Columns: 4  
@@ -213,7 +213,7 @@ cv_plot2 <- cv_results2 %>%
 
 ## Now that you have calibrated (tuned) refit to whole dataset
 # ## Predict for all the observations in storeItemTest
-## Now that you have calibrated (tuned) refit to whole dataset19
+## Now that you have calibrated (tuned) refit to whole dataset
 fullfit1 <- cv_results1 %>%
 modeltime_refit(data=storeItemTrain1)
 forecast1 <- fullfit1 %>%
@@ -230,6 +230,83 @@ forecast2 <- cv_results2 %>%
     new_data = storeItemTest2,
     actual_data = storeItemTrain2
     ) %>%
+  plot_modeltime_forecast(.interactive=FALSE)
+
+# # top row is the cv results, bottom row is the forecast with the fullfit
+cv_plot1 + cv_plot2 + forecast1 + forecast2 +
+  plot_layout(ncol = 2)
+
+11/22/24
+#facebook prophet
+
+storeItemTrain1 <- item_demand_train %>%
+  filter(store==5, item==18)
+
+storeItemTrain2 <- item_demand_train %>%
+  filter(store==10, item==4)
+
+storeItemTest1 <- item_demand_test %>%
+  filter(store==5, item==18)
+
+storeItemTest2 <- item_demand_test %>%
+  filter(store==10, item==4)
+
+## Create the CV split for time series
+cv_split1 <- time_series_split(storeItemTrain1, assess="3 months", cumulative = TRUE)
+cv_split2 <- time_series_split(storeItemTrain2, assess="3 months", cumulative = TRUE)
+
+## Create a recipe for the prophet model using facebook prophet
+prophet_model1 <- prophet_reg() %>% 
+  set_engine(engine = 'prophet') %>% 
+  fit(sales~date, data = training(cv_split1))
+
+prophet_model2 <- prophet_reg() %>% 
+  set_engine(engine = 'prophet') %>% 
+  fit(sales~date, data = training(cv_split2))
+
+
+## Calibrate (tune) the models 
+cv_results1 <- modeltime_calibrate(prophet_model1,
+                                   new_data = testing(cv_split1))
+
+cv_results2 <- modeltime_calibrate(prophet_model2,
+                                   new_data = testing(cv_split2))
+
+
+## Visualize results
+cv_plot1 <- cv_results1 %>% 
+  modeltime_forecast(
+    new_data = testing(cv_split1),
+    actual_data = training(cv_split1)
+  ) %>%
+  plot_modeltime_forecast(.interactive=FALSE)
+
+cv_plot2 <- cv_results2 %>% 
+  modeltime_forecast(
+    new_data = testing(cv_split2),
+    actual_data = training(cv_split2)
+  ) %>%
+  plot_modeltime_forecast(.interactive=FALSE)
+
+## Now that you have calibrated (tuned) refit to whole dataset
+# ## Predict for all the observations in storeItemTest
+## Now that you have calibrated (tuned) refit to whole dataset19
+fullfit1 <- cv_results1 %>%
+  modeltime_refit(data=storeItemTrain1)
+forecast1 <- fullfit1 %>%
+  modeltime_forecast(
+    new_data = storeItemTest1,
+    actual_data = storeItemTrain1
+  ) %>%
+  plot_modeltime_forecast(.interactive=FALSE)
+
+fullfit2 <- cv_results2 %>%
+  modeltime_refit(data=storeItemTrain2)
+forecast2 <- cv_results2 %>%
+  modeltime_forecast(
+    new_data = storeItemTest2,
+    actual_data = storeItemTrain2
+  ) %>%
   plot_modeltime_forecast(.interactive=FALSE)
 
 # # top row is the cv results, bottom row is the forecast with the fullfit
