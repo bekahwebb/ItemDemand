@@ -1,114 +1,71 @@
-
-#The structure of your code is on the right track for generating store-item predictions using the Prophet model for the Kaggle Item Demand Forecasting competition. Below are recommendations and improvements to ensure your code runs efficiently and adheres to Kaggle's requirements.
-
-#Refined Code for the Kaggle Submission
-#Here's an improved version of your code with comments and fixes:
-  
-  r
-#Copy code
-# Load necessary libraries
 library(tidyverse)
+library(tidymodels)
 library(vroom)
 library(prophet)
-library(tidymodels)
+library(modeltime)
 library(timetk)
 
+# loading data for kaggle submission
 # Define file paths (use Kaggle's dataset paths)
-train_path <- "../input/train.csv"
-test_path <- "../input/test.csv"
+# train_path <- "/kaggle/input/demand-forecasting-kernels-only/train.csv"
+# test_path <- "/kaggle/input/demand-forecasting-kernels-only/test.csv"
+# 
+# # Load data
+# train <- vroom(train_path)
+# test <- vroom(test_path)
 
 # Load data
-train <- vroom(train_path)
-test <- vroom(test_path)
+item_demand_test <- vroom('test.csv') # Rows: 45000 Columns: 4  
+item_demand_train <- vroom('train.csv')# Rows: 913000 Columns: 4 
 
 # Ensure 'date' is in the correct format
-train$date <- as.Date(train$date)
-test$date <- as.Date(test$date)
+item_demand_train$date <- as.Date(item_demand_train$date)
+item_demand_test$date <- as.Date(item_demand_test$date)
 
-# Initialize an empty data frame for predictions
-all_preds <- tibble()
-
-# Get the number of stores and items
 nStores <- max(train$store)
 nItems <- max(train$item)
-
-# Iterate through each store and item
-for (s in 1:nStores) {
-  for (i in 1:nItems) {
-    # Filter data for the current store-item pair
-    storeItemTrain <- train %>% filter(store == s, item == i)
-    storeItemTest <- test %>% filter(store == s, item == i)
+# #run for 1 store to check
+# s=9 
+# i=27
+for(s in 1:nStores){
+  for(i in 1:nItems){
+    storeItemTrain <- train %>%
+      filter(store==s, item==i)
+    storeItemTest <- test %>%
+      filter(store==s, item==i)
     
-    # Prepare data for Prophet
-    if (nrow(storeItemTrain) > 0) {
-      prophet_data <- storeItemTrain %>%
-        select(ds = date, y = sales) # Prophet requires 'ds' (date) and 'y' (target)
-      
-      # Fit the Prophet model
-      prophet_model <- prophet() # Default settings
-      prophet_model <- add_country_holidays(prophet_model, country_name = 'US')
-      prophet_model <- fit.prophet(prophet_model, prophet_data)
-      
-      # Make future data frame for prediction
-      future_dates <- make_future_dataframe(
-        prophet_model, 
-        periods = nrow(storeItemTest), 
-        freq = "day"
-      )
-      
-      # Predict
-      forecast <- predict(prophet_model, future_dates)
-      
-      # Format predictions to match Kaggle submission
-      preds <- storeItemTest %>%
-        mutate(sales = forecast$yhat) %>% # Use yhat (predicted sales)
-        select(id, sales) # Ensure columns match submission requirements
-      
-      # Append predictions
+    ## Fit storeItem models here
+    cv_split <- time_series_split(storeItemTrain, assess="3 months", cumulative = TRUE)
+    
+    prophet_model <- prophet_reg() %>%
+      set_engine(engine = "prophet") %>%
+      fit(sales ~ date, data = training(cv_split))
+    
+    cv_results <- modeltime_calibrate(prophet_model,
+                                      new_data = testing(cv_split))
+    
+    fullfit <- cv_results %>%
+      modeltime_refit(data=storeItemTrain)
+    
+    preds <- fullfit %>% 
+      modeltime_forecast(
+        new_data = storeItemTest,
+        actual_data = storeItemTrain
+      ) %>% 
+      filter(!is.na(.model_id)) %>%
+      mutate(id=storeItemTest$id) %>%
+      select(id, .value) %>%
+      rename(sales=.value)
+    
+    
+    ## Save storeItem predictions
+    if(s==1 & i==1){
+      all_preds <- preds
+    } else {
       all_preds <- bind_rows(all_preds, preds)
     }
+    
   }
 }
 
-# Save predictions to CSV
-#vroom_write(all_preds, file = "submission.csv", delim = ",")
-#Key Changes and Explanations
-#Prophet Data Preparation:
-  
- # Prophet requires ds (date) and y (target) columns, so the training data is reformatted.
-#Added U.S. holidays using add_country_holidays for better forecasts if seasonality is influenced by holidays.
-#Handle Missing Data:
-  
- # If there is no training data for a specific store-item pair, the code skips that iteration (if (nrow(storeItemTrain) > 0)).
-#Future Dates for Prediction:
-  
- # The make_future_dataframe() function is used to generate dates corresponding to the test dataset.
-#Efficiency and Compatibility:
-  
- # Predictions for each store-item are appended to a single data frame (all_preds) for easy saving at the end.
-#Columns in all_preds are matched to Kaggle's required format: id and sales.
-#Save Predictions:
-
-#vroom_write() saves the predictions as submission.csv. Update the filename if needed.
-#Steps to Run and Submit
-#Add Competition Data:
-
-#On Kaggle, click Add Data > Competition Datasets > search for the competition > click the "+" sign next to the dataset.
-#Use the file path provided by Kaggle (e.g., ../input/train.csv).
-#Save and Run:
-
-#Save your notebook and click Save Version. Kaggle will execute the notebook.
-#Submit:
-
-#Once the notebook finishes running, select this notebook as your submission.
-#Suggestions for Improvement
-#Hyperparameter Tuning:
-
-#Experiment with different Prophet settings (e.g., seasonality, changepoints).
-#Ensemble Approach:
-
-#Combine forecasts from multiple models (e.g., ARIMA, Prophet) using a weighted average for potentially better accuracy.
-#Use Cross-Validation:
-
-#Implement time-series cross-validation on the training set to evaluate the performance of your models before predicting on the test set.
-#With this setup, you should have a robust solution for the Kaggle Item Demand competition. Good luck! 🚀
+vroom_write(all_preds, file="submission.csv", delim=",")
